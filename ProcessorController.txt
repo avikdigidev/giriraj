@@ -1,0 +1,34 @@
+package com.processor.excelapi.controller;
+
+import com.processor.excelapi.service.ProcessorService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@Slf4j
+public class ProcessorController {
+
+    private final ProcessorService processorService;
+    
+    @Autowired
+    public ProcessorController(ProcessorService processorService) {
+        this.processorService = processorService;
+    }
+    
+    @PostMapping("/process")
+    public ResponseEntity<String> processExcel(@RequestParam("filePath") String filePath) {
+        log.info("Received request to process Excel file: {}", filePath);
+        
+        try {
+            processorService.processExcelFile(filePath);
+            return ResponseEntity.ok("Excel file processed successfully");
+        } catch (Exception e) {
+            log.error("Error processing Excel file: {}", filePath, e);
+            return ResponseEntity.internalServerError().body("Error processing Excel file: " + e.getMessage());
+        }
+    }
+}

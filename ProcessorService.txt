@@ -1,0 +1,135 @@
+package com.processor.excelapi.service;
+
+import com.processor.excelapi.model.ExcelRecord;
+import com.processor.excelapi.model.PhoneConfirmResponse;
+import com.processor.excelapi.model.ConfirmNumberResponse;
+import com.processor.excelapi.repository.PhoneConfirmResponseRepository;
+import com.processor.excelapi.repository.ConfirmNumberResponseRepository;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.util.List;
+
+@Service
+@Slf4j
+public class ProcessorService {
+
+    private final ExcelService excelService;
+    private final ApiClientService apiClientService;
+    private final PhoneConfirmResponseRepository phoneConfirmResponseRepository;
+    private final ConfirmNumberResponseRepository confirmNumberResponseRepository;
+    private String currentFilePath;
+    
+    @Autowired
+    public ProcessorService(
+            ExcelService excelService,
+            ApiClientService apiClientService,
+            PhoneConfirmResponseRepository phoneConfirmResponseRepository,
+            ConfirmNumberResponseRepository confirmNumberResponseRepository) {
+        this.excelService = excelService;
+        this.apiClientService = apiClientService;
+        this.phoneConfirmResponseRepository = phoneConfirmResponseRepository;
+        this.confirmNumberResponseRepository = confirmNumberResponseRepository;
+    }
+    
+    public void processExcelFile(String filePath) {
+        try {
+            this.currentFilePath = filePath;
+            List<ExcelRecord> records = excelService.readExcelFile(filePath);
+            log.info("Processing {} records from Excel file", records.size());
+            
+            for (ExcelRecord record : records) {
+                // Skip records that have already been processed
+                if (!"Pending".equals(record.getStatus())) {
+                    log.info("Skipping already processed record with status {}: Account={}, Phone={}", 
+                            record.getStatus(), record.getAccountNumber(), record.getPhoneNumber());
+                    continue;
+                }
+                
+                processRecord(record);
+            }
+            
+            log.info("Completed processing all records from Excel file");
+        } catch (IOException e) {
+            log.error("Error reading Excel file: {}", filePath, e);
+        }
+    }
+    
+    private void processRecord(ExcelRecord record) {
+        log.info("Processing record: Account={}, Phone={}", record.getAccountNumber(), record.getPhoneNumber());
+        boolean success = true;
+        
+        try {
+            // Step 1: Call Phone Confirm API
+            PhoneConfirmResponse phoneConfirmResponse = apiClientService.callPhoneConfirmApi(record.getPhoneNumber());
+            
+            // Save the response
+            if (phoneConfirmResponse != null) {
+                phoneConfirmResponseRepository.save(phoneConfirmResponse);
+            } else {
+                log.error("Failed to get response from Phone Confirm API for phone: {}", record.getPhoneNumber());
+                excelService.updateRecordStatus(currentFilePath, record, "Failure - Phone Confirm API");
+                return;  // Skip to next record
+            }
+            
+            // Check if we should proceed based on status code
+            if (phoneConfirmResponse.getSlaStatus() != null && 
+                "CSLPFTS0106".equals(phoneConfirmResponse.getSlaStatus().getCode())) {
+                log.info("Skipping further processing for phone: {} due to status code: {}", 
+                        record.getPhoneNumber(), phoneConfirmResponse.getSlaStatus().getCode());
+                excelService.updateRecordStatus(currentFilePath, record, 
+                        "Skipped - SLA Status Code: " + phoneConfirmResponse.getSlaStatus().getCode());
+                return;  // Skip to next record
+            }
+            
+            // Step 2: Call Java API Read
+            ResponseEntity<?> javaApiReadResponse = apiClientService.callJavaApiRead(record);
+            if (javaApiReadResponse == null || !javaApiReadResponse.getStatusCode().is2xxSuccessful()) {
+                log.error("Failed to get success response from Java API Read for account: {}, phone: {}", 
+                        record.getAccountNumber(), record.getPhoneNumber());
+                success = false;
+                // Continue with next step despite error
+            }
+            
+            // Step 3: Call Insert API
+            ResponseEntity<?> insertApiResponse = apiClientService.callInsertApi(record, phoneConfirmResponse);
+            if (insertApiResponse == null || !insertApiResponse.getStatusCode().is2xxSuccessful()) {
+                log.error("Failed to get success response from Insert API for account: {}, phone: {}", 
+                        record.getAccountNumber(), record.getPhoneNumber());
+                success = false;
+                // Continue with next step despite error
+            }
+            
+            // Step 4: Call Final API
+            ConfirmNumberResponse confirmNumberResponse = apiClientService.callFinalApi(record);
+            
+            // Save the response
+            if (confirmNumberResponse != null) {
+                confirmNumberResponseRepository.save(confirmNumberResponse);
+            } else {
+                log.error("Failed to get response from Final API for account: {}, phone: {}", 
+                        record.getAccountNumber(), record.getPhoneNumber());
+                success = false;
+            }
+            
+            // Update status in Excel based on overall success
+            if (success) {
+                excelService.updateRecordStatus(currentFilePath, record, "Success");
+                log.info("Successfully processed record: Account={}, Phone={}", 
+                        record.getAccountNumber(), record.getPhoneNumber());
+            } else {
+                excelService.updateRecordStatus(currentFilePath, record, "Failure");
+                log.info("Completed processing with failures for record: Account={}, Phone={}", 
+                        record.getAccountNumber(), record.getPhoneNumber());
+            }
+            
+        } catch (Exception e) {
+            log.error("Error processing record: Account={}, Phone={}", 
+                    record.getAccountNumber(), record.getPhoneNumber(), e);
+            excelService.updateRecordStatus(currentFilePath, record, "Failure - Exception: " + e.getMessage());
+        }
+    }
+}

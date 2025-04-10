@@ -1,0 +1,227 @@
+package com.processor.excelapi.service;
+
+import com.processor.excelapi.model.ExcelRecord;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.stereotype.Service;
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+@Service
+@Slf4j
+public class ExcelService {
+
+    private static final String STATUS_COLUMN_HEADER = "Status";
+
+    public List<ExcelRecord> readExcelFile(String filePath) throws IOException {
+        List<ExcelRecord> records = new ArrayList<>();
+        
+        try (FileInputStream fis = new FileInputStream(filePath);
+             Workbook workbook = new XSSFWorkbook(fis)) {
+            
+            Sheet sheet = workbook.getSheetAt(0);
+            
+            // Check if status column exists, if not, add it
+            Row headerRow = sheet.getRow(0);
+            int statusColumnIndex = -1;
+            
+            for (int i = 0; i < headerRow.getLastCellNum(); i++) {
+                Cell cell = headerRow.getCell(i);
+                if (cell != null && STATUS_COLUMN_HEADER.equals(cell.getStringCellValue())) {
+                    statusColumnIndex = i;
+                    break;
+                }
+            }
+            
+            if (statusColumnIndex == -1) {
+                // Add status column
+                statusColumnIndex = headerRow.getLastCellNum();
+                Cell newCell = headerRow.createCell(statusColumnIndex);
+                newCell.setCellValue(STATUS_COLUMN_HEADER);
+                
+                // Save the updated file with the new column
+                try (FileOutputStream fos = new FileOutputStream(filePath)) {
+                    workbook.write(fos);
+                }
+                
+                // Reload the workbook to get the updated structure
+                try (FileInputStream reloadFis = new FileInputStream(filePath);
+                     Workbook reloadedWorkbook = new XSSFWorkbook(reloadFis)) {
+                    sheet = reloadedWorkbook.getSheetAt(0);
+                    headerRow = sheet.getRow(0);
+                }
+            }
+            
+            Iterator<Row> rowIterator = sheet.iterator();
+            
+            // Skip header row since we've already processed it
+            if (rowIterator.hasNext()) {
+                rowIterator.next();
+            }
+            
+            int rowIndex = 1; // Start from 1 (after header)
+            while (rowIterator.hasNext()) {
+                Row row = rowIterator.next();
+                ExcelRecord record = new ExcelRecord();
+                record.setRowIndex(rowIndex);
+                
+                // Set accountNumber and phoneNumber (mandatory)
+                Cell accountNumberCell = row.getCell(0);
+                if (accountNumberCell != null) {
+                    record.setAccountNumber(getCellValueAsString(accountNumberCell));
+                } else {
+                    rowIndex++;
+                    continue; // Skip row if accountNumber is missing
+                }
+                
+                Cell phoneNumberCell = row.getCell(1);
+                if (phoneNumberCell != null) {
+                    record.setPhoneNumber(getCellValueAsString(phoneNumberCell));
+                } else {
+                    rowIndex++;
+                    continue; // Skip row if phoneNumber is missing
+                }
+                
+                // Optional fields
+                Cell lineTypeCell = row.getCell(2);
+                if (lineTypeCell != null && !getCellValueAsString(lineTypeCell).trim().isEmpty()) {
+                    record.setLineType(getCellValueAsString(lineTypeCell));
+                }
+                
+                Cell confirmedCell = row.getCell(3);
+                if (confirmedCell != null && !getCellValueAsString(confirmedCell).trim().isEmpty()) {
+                    record.setConfirmed(Boolean.parseBoolean(getCellValueAsString(confirmedCell)));
+                }
+                
+                Cell ssnCell = row.getCell(4);
+                if (ssnCell != null && !getCellValueAsString(ssnCell).trim().isEmpty()) {
+                    record.setSsn(getCellValueAsString(ssnCell));
+                }
+                
+                Cell dobCell = row.getCell(5);
+                if (dobCell != null) {
+                    if (dobCell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(dobCell)) {
+                        record.setDob(dobCell.getDateCellValue().toInstant()
+                                .atZone(ZoneId.systemDefault())
+                                .toLocalDate());
+                    } else if (dobCell.getCellType() == CellType.STRING) {
+                        String dobString = dobCell.getStringCellValue();
+                        // Parse dobString to LocalDate using appropriate format
+                        // This is a placeholder - you'll need proper date parsing logic
+                    }
+                }
+                
+                Cell channelIdCell = row.getCell(6);
+                if (channelIdCell != null && !getCellValueAsString(channelIdCell).trim().isEmpty()) {
+                    record.setChannelId(getCellValueAsString(channelIdCell));
+                }
+                
+                // Set initial status to "Pending"
+                Cell statusCell = row.getCell(statusColumnIndex);
+                if (statusCell != null) {
+                    record.setStatus(getCellValueAsString(statusCell));
+                } else {
+                    // If status cell doesn't exist, create it with "Pending" status
+                    statusCell = row.createCell(statusColumnIndex);
+                    statusCell.setCellValue("Pending");
+                }
+                
+                records.add(record);
+                rowIndex++;
+            }
+            
+            // Save the updated file
+            try (FileOutputStream fos = new FileOutputStream(filePath)) {
+                workbook.write(fos);
+            }
+        }
+        
+        return records;
+    }
+    
+    public void updateRecordStatus(String filePath, ExcelRecord record, String status) {
+        try (FileInputStream fis = new FileInputStream(filePath);
+             Workbook workbook = new XSSFWorkbook(fis)) {
+            
+            Sheet sheet = workbook.getSheetAt(0);
+            
+            // Find the status column index
+            Row headerRow = sheet.getRow(0);
+            int statusColumnIndex = -1;
+            
+            for (int i = 0; i < headerRow.getLastCellNum(); i++) {
+                Cell cell = headerRow.getCell(i);
+                if (cell != null && STATUS_COLUMN_HEADER.equals(cell.getStringCellValue())) {
+                    statusColumnIndex = i;
+                    break;
+                }
+            }
+            
+            if (statusColumnIndex == -1) {
+                log.error("Status column not found");
+                return;
+            }
+            
+            // Get the row from the rowIndex stored in the record
+            Row row = sheet.getRow(record.getRowIndex());
+            if (row == null) {
+                log.error("Row not found at index: {}", record.getRowIndex());
+                return;
+            }
+            
+            // Update the status cell
+            Cell statusCell = row.getCell(statusColumnIndex);
+            if (statusCell == null) {
+                statusCell = row.createCell(statusColumnIndex);
+            }
+            statusCell.setCellValue(status);
+            
+            // Save the updated file
+            try (FileOutputStream fos = new FileOutputStream(filePath)) {
+                workbook.write(fos);
+            }
+            
+            log.info("Updated status to '{}' for account: {}, phone: {}", 
+                    status, record.getAccountNumber(), record.getPhoneNumber());
+        } catch (IOException e) {
+            log.error("Error updating status in Excel file: {}", filePath, e);
+        }
+    }
+    
+    private String getCellValueAsString(Cell cell) {
+        if (cell == null) {
+            return "";
+        }
+        
+        switch (cell.getCellType()) {
+            case STRING:
+                return cell.getStringCellValue();
+            case NUMERIC:
+                if (DateUtil.isCellDateFormatted(cell)) {
+                    return cell.getDateCellValue().toString();
+                } else {
+                    // Convert numeric to string without decimal if it's a whole number
+                    double value = cell.getNumericCellValue();
+                    if (value == Math.floor(value)) {
+                        return String.format("%.0f", value);
+                    } else {
+                        return String.valueOf(value);
+                    }
+                }
+            case BOOLEAN:
+                return String.valueOf(cell.getBooleanCellValue());
+            case FORMULA:
+                return cell.getCellFormula();
+            default:
+                return "";
+        }
+    }
+}

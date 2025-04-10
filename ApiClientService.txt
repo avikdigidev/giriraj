@@ -1,0 +1,261 @@
+package com.processor.excelapi.service;
+
+import com.processor.excelapi.model.*;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.UUID;
+
+@Service
+@Slf4j
+public class ApiClientService {
+
+    private final RestTemplate restTemplate;
+    
+    @Autowired
+    public ApiClientService(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
+    
+    public PhoneConfirmResponse callPhoneConfirmApi(String phoneNumber) {
+        String url = "https://api.example.com/phone-confirm"; // Replace with actual URL
+        
+        PhoneConfirmRequest request = createPhoneConfirmRequest(phoneNumber);
+        
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<PhoneConfirmRequest> entity = new HttpEntity<>(request, headers);
+            
+            ResponseEntity<PhoneConfirmResponse> response = restTemplate.postForEntity(
+                    url, entity, PhoneConfirmResponse.class);
+            
+            return response.getBody();
+        } catch (RestClientException e) {
+            log.error("Error calling Phone Confirm API for phone: {}", phoneNumber, e);
+            return null;
+        }
+    }
+    
+    private PhoneConfirmRequest createPhoneConfirmRequest(String phoneNumber) {
+        PhoneConfirmRequest request = new PhoneConfirmRequest();
+        
+        PhoneConfirmRequest.Header header = new PhoneConfirmRequest.Header();
+        header.setTransId("test" + UUID.randomUUID().toString().substring(0, 6));
+        header.setUserName("csluser");
+        header.setPassword("csluser5");
+        header.setRefNum("CSLTEST");
+        header.setPliIndicator("POO");
+        header.setClientId("PhoneConfirm");
+        request.setHeader(header);
+        
+        PhoneConfirmRequest.TrustScoreRequest trustScoreRequest = new PhoneConfirmRequest.TrustScoreRequest();
+        trustScoreRequest.setPhoneNumber(phoneNumber);
+        request.setTrustScoreRequest(trustScoreRequest);
+        
+        return request;
+    }
+    
+    public ResponseEntity<?> callJavaApiRead(ExcelRecord record) {
+        String url = "https://api.example.com/java-api-read"; // Replace with actual URL
+        
+        JavaApiReadRequest request = createJavaApiReadRequest(record);
+        
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<JavaApiReadRequest> entity = new HttpEntity<>(request, headers);
+            
+            return restTemplate.postForEntity(url, entity, Object.class);
+        } catch (RestClientException e) {
+            log.error("Error calling Java API Read for account: {}, phone: {}", 
+                    record.getAccountNumber(), record.getPhoneNumber(), e);
+            return null;
+        }
+    }
+    
+    private JavaApiReadRequest createJavaApiReadRequest(ExcelRecord record) {
+        JavaApiReadRequest request = new JavaApiReadRequest();
+        
+        request.setTransId("Test" + UUID.randomUUID().toString().substring(0, 6));
+        request.setEventName("Paxtone DataService JavaAPIRead");
+        
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
+        request.setEventTimestamp(LocalDateTime.now().format(formatter));
+        request.setServerName("10.245.345");
+        
+        JavaApiReadRequest.RequestMetadata metadata = new JavaApiReadRequest.RequestMetadata();
+        JavaApiReadRequest.Version version = new JavaApiReadRequest.Version();
+        version.setMajor("1");
+        version.setMinor("1");
+        version.setPatch("0");
+        version.setVersionDate(LocalDateTime.now().format(formatter));
+        metadata.setVersion(version);
+        request.setRequestMetadata(metadata);
+        
+        JavaApiReadRequest.Request req = new JavaApiReadRequest.Request();
+        req.setPhoneNumber(record.getPhoneNumber());
+        req.setAccountNumber(record.getAccountNumber());
+        request.setRequest(req);
+        
+        return request;
+    }
+    
+    public ResponseEntity<?> callInsertApi(ExcelRecord record, PhoneConfirmResponse phoneConfirmResponse) {
+        String url = "https://api.example.com/insert-api"; // Replace with actual URL
+        
+        InsertApiRequest request = createInsertApiRequest(record, phoneConfirmResponse);
+        
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<InsertApiRequest> entity = new HttpEntity<>(request, headers);
+            
+            return restTemplate.postForEntity(url, entity, Object.class);
+        } catch (RestClientException e) {
+            log.error("Error calling Insert API for account: {}, phone: {}", 
+                    record.getAccountNumber(), record.getPhoneNumber(), e);
+            return null;
+        }
+    }
+    
+    private InsertApiRequest createInsertApiRequest(ExcelRecord record, PhoneConfirmResponse phoneConfirmResponse) {
+        InsertApiRequest request = new InsertApiRequest();
+        
+        request.setEventName("Paxtone DataService JavaAPIInsert");
+        
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        request.setEventTimestamp(LocalDateTime.now().format(formatter));
+        request.setServerName("10.245.345");
+        request.setAction("insert");
+        
+        InsertApiRequest.RequestMetadata metadata = new InsertApiRequest.RequestMetadata();
+        InsertApiRequest.Version version = new InsertApiRequest.Version();
+        version.setMajor("1");
+        version.setMinor("1");
+        version.setPatch("0");
+        version.setVersionDate(LocalDateTime.now().format(formatter));
+        metadata.setVersion(version);
+        request.setRequestMetadata(metadata);
+        
+        InsertApiRequest.InsertRequest req = new InsertApiRequest.InsertRequest();
+        req.setAccountNumber(record.getAccountNumber());
+        req.setPaxtoneId(record.getPhoneNumber());
+        req.setPhoneNumber(record.getPhoneNumber());
+        req.setLineType(record.getLineType());
+        
+        // Set carrier info from the phone confirm response if available
+        if (phoneConfirmResponse != null && 
+            phoneConfirmResponse.getTrustScoreResponse() != null && 
+            phoneConfirmResponse.getTrustScoreResponse().getResponse() != null) {
+            
+            req.setCarrier(phoneConfirmResponse.getTrustScoreResponse().getResponse().getCarrier());
+            req.setCountryCode(phoneConfirmResponse.getTrustScoreResponse().getResponse().getCountryCode());
+        } else {
+            req.setCarrier("Unknown");
+            req.setCountryCode("US");
+        }
+        
+        req.setVerified(record.getConfirmed() ? "TRUE" : "FALSE");
+        req.setNameScore("100");
+        req.setAddressScore("-1");
+        req.setEventType("TN_PORT");
+        req.setSsn(record.getSsn() != null ? record.getSsn() : "123456789");
+        
+        // Format DOB
+        DateTimeFormatter dobFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        req.setDob(record.getDob() != null ? record.getDob().format(dobFormatter) : "1970-01-01");
+        
+        String txnId = "claudia" + UUID.randomUUID().toString().substring(0, 8);
+        req.setTxnId(txnId);
+        req.setAdId(txnId);
+        req.setTokenId(txnId + "1");
+        req.setClientId("FROSAMCO");
+        req.setSys("9277");
+        req.setPrint("2000");
+        req.setAgent("1000");
+        req.setEventDate(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")));
+        
+        InsertApiRequest.Details details = new InsertApiRequest.Details();
+        details.setEventDate("");
+        details.setEventAdditionalInfo("");
+        details.setStatusDesc("FACIPARDS");
+        details.setAcctType("PLCC");
+        details.setAcctOpenDate("");
+        details.setEmailAddr("");
+        details.setEmailLeadDate("");
+        details.setNumberRefreshDate("");
+        req.setDetails(details);
+        
+        request.setRequest(req);
+        
+        return request;
+    }
+    
+    public ConfirmNumberResponse callFinalApi(ExcelRecord record) {
+        String url = "https://api.example.com/final-api"; // Replace with actual URL
+        
+        FinalApiRequest request = createFinalApiRequest(record);
+        
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<FinalApiRequest> entity = new HttpEntity<>(request, headers);
+            
+            ResponseEntity<ConfirmNumberResponse> response = restTemplate.postForEntity(
+                    url, entity, ConfirmNumberResponse.class);
+            
+            return response.getBody();
+        } catch (RestClientException e) {
+            log.error("Error calling Final API for account: {}, phone: {}", 
+                    record.getAccountNumber(), record.getPhoneNumber(), e);
+            return null;
+        }
+    }
+    
+    private FinalApiRequest createFinalApiRequest(ExcelRecord record) {
+        FinalApiRequest request = new FinalApiRequest();
+        
+        FinalApiRequest.Body body = new FinalApiRequest.Body();
+        body.setAccount(record.getAccountNumber());
+        body.setPhoneNumber(record.getPhoneNumber());
+        body.setAddress("");
+        body.setCity("");
+        body.setClientId("Testing");
+        body.setExtendedAddress("");
+        body.setFirstName("GB");
+        body.setLastName("BB");
+        
+        // Set SSN from record or default
+        body.setSsn(record.getSsn() != null ? record.getSsn() : "123456789");
+        
+        // Set DOB from record or default
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
+        body.setDateOfBirth(record.getDob() != null ? 
+                record.getDob().format(formatter) : "27-03-1990");
+        
+        body.setState("WA");
+        body.setZipCode("98052");
+        body.setPaxtoneId("");
+        request.setBody(body);
+        
+        FinalApiRequest.Header header = new FinalApiRequest.Header();
+        header.setChannelId("TR-UL");
+        header.setConsentType("optedOut");
+        header.setVersion("");
+        header.setTransId("Testing" + UUID.randomUUID().toString().substring(0, 3));
+        request.setHeader(header);
+        
+        return request;
+    }
+}

@@ -1,0 +1,24 @@
+# Server configuration
+server.port=8080
+
+# Spring Data JPA configuration
+spring.datasource.url=jdbc:h2:mem:exceldb
+spring.datasource.driverClassName=org.h2.Driver
+spring.datasource.username=sa
+spring.datasource.password=
+spring.jpa.database-platform=org.hibernate.dialect.H2Dialect
+spring.jpa.hibernate.ddl-auto=update
+
+# H2 Console
+spring.h2.console.enabled=true
+spring.h2.console.path=/h2-console
+
+# Logging
+logging.level.com.processor.excelapi=INFO
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} - %msg%n
+
+# API endpoints configuration
+api.phoneconfirm.url=https://api.example.com/phone-confirm
+api.javaapi.read.url=https://api.example.com/java-api-read
+api.insert.url=https://api.example.com/insert-api
+api.final.url=https://api.example.com/final-api
